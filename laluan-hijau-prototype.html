@@ -1,0 +1,717 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>body{margin:0}</style></head><body>
+<title>Laluan Hijau Control Room</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: control-room console. Header + controls, then a two-lane live corridor beside the driver's phone, then KPIs, the AI junction table and the event log. */
+:root{
+  color-scheme: dark;
+  --bg:#0B1A2B; --panel:#11253A; --panel-2:#17304C; --line:#25425F;
+  --fg:#E8EEF5; --muted:#93A6BA; --dim:#5F7690;
+  --red:#E3263F; --red-soft:rgba(227,38,63,.16);
+  --green:#2FD27A; --green-soft:rgba(47,210,122,.16);
+  --amber:#F2B33D; --amber-soft:rgba(242,179,61,.16);
+  --road:#2A3D53; --lane:#4A6280;
+  --phone:#0A1522; --screen:#F3F5F8; --ink:#152D47; --ink-2:#4A5A6C; --card:#FFFFFF; --hair:#DFE4EA;
+  --f-display:"Barlow Condensed","Arial Narrow",Arial,sans-serif;
+  --f-body:"Barlow",Arial,Helvetica,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:15px;line-height:1.45}
+.wrap{max-width:1360px;margin:0 auto;padding-block:20px 40px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:16px}
+button{font:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+
+/* header */
+.top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px 24px}
+.brand{display:flex;align-items:center;gap:14px;min-width:0}
+.mark{width:44px;height:44px;border-radius:10px;background:var(--panel-2);display:grid;place-items:center;flex:none}
+.brand h1{font-family:var(--f-display);font-size:32px;line-height:1;margin:0;letter-spacing:.01em;text-wrap:balance}
+.brand p{margin:3px 0 0;color:var(--muted);font-size:13px}
+.status{display:flex;align-items:center;gap:10px;padding:8px 14px;border-radius:999px;background:var(--panel);border:1px solid var(--line);font-family:var(--f-mono);font-size:12px;letter-spacing:.06em;text-transform:uppercase}
+.status i{width:10px;height:10px;border-radius:50%;background:var(--dim)}
+.status.live i{background:var(--red);box-shadow:0 0 0 0 var(--red);animation:pulse 1.2s infinite}
+.status.done i{background:var(--green)}
+.status.lost i{background:var(--amber)}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(227,38,63,.6)}100%{box-shadow:0 0 0 10px rgba(227,38,63,0)}}
+
+/* controls */
+.controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.btn{border:1px solid var(--line);background:var(--panel);color:var(--fg);padding:9px 16px;border-radius:8px;font-weight:600}
+.btn:hover{background:var(--panel-2)}
+.btn.primary{background:var(--red);border-color:var(--red);color:#fff}
+.btn.primary:hover{filter:brightness(1.08)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{background:var(--panel);color:var(--muted);border:0;padding:9px 12px;font-family:var(--f-mono);font-size:13px}
+.seg button[aria-pressed="true"]{background:var(--panel-2);color:var(--fg)}
+.toggle{display:inline-flex;align-items:center;gap:10px;padding:8px 14px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--fg);font-weight:600}
+.toggle .sw{width:34px;height:20px;border-radius:999px;background:var(--line);position:relative;transition:background .2s}
+.toggle .sw::after{content:"";position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:var(--fg);transition:transform .2s}
+.toggle[aria-pressed="true"] .sw{background:var(--amber)}
+.toggle[aria-pressed="true"] .sw::after{transform:translateX(14px)}
+.spacer{flex:1}
+.label{font-family:var(--f-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+
+/* main */
+.main{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:16px;align-items:start}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px}
+.sim{padding:14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.sim-head{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;align-items:baseline}
+.sim-head h2{font-family:var(--f-display);font-size:20px;margin:0;letter-spacing:.02em}
+canvas{display:block;width:100%;border-radius:10px;background:var(--bg)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;color:var(--muted);font-size:13px}
+.legend span{display:inline-flex;align-items:center;gap:7px}
+.legend b{width:12px;height:12px;border-radius:3px;display:inline-block}
+
+/* phone */
+.side{display:flex;flex-direction:column;gap:16px}
+.phone{background:var(--phone);border-radius:38px;padding:12px;border:1px solid var(--line)}
+.screen{background:var(--screen);border-radius:28px;color:var(--ink);min-height:470px;overflow:hidden;display:flex;flex-direction:column}
+.sbar{display:flex;justify-content:space-between;padding:12px 20px 6px;font-weight:700;font-size:13px}
+.minimap{margin:4px 12px 0;height:96px;border-radius:16px;background:#E2E7ED;position:relative;overflow:hidden}
+.minimap .rd{position:absolute;left:0;right:0;top:40px;height:22px;background:#fff}
+.minimap .you{position:absolute;top:44px;width:24px;height:14px;border-radius:4px;background:var(--ink);transition:left .3s,top .3s}
+.minimap .amb{position:absolute;top:44px;width:26px;height:14px;border-radius:4px;background:#fff;border:2px solid #C8102E;transition:left .3s}
+.minimap .tag{position:absolute;font-size:11px;font-weight:700;color:var(--ink)}
+.card{margin:12px;border-radius:20px;padding:16px 18px;background:var(--card);border:1px solid var(--hair)}
+.card.alert{background:#C8102E;color:#fff;border-color:#C8102E}
+.card.ok{background:#E9F7EF;border-color:#BFE8CF}
+.card .k{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;opacity:.85}
+.card .big{font-family:var(--f-display);font-size:54px;line-height:1;margin-top:6px;font-variant-numeric:tabular-nums}
+.card .h{font-weight:700;font-size:20px;line-height:1.2;margin-top:6px;text-wrap:balance}
+.card .s{font-size:14px;margin-top:6px;opacity:.95}
+.steps{display:flex;flex-direction:column;gap:8px;margin:0 12px 14px}
+.step{display:flex;gap:10px;align-items:center;background:var(--card);border:1px solid var(--hair);border-radius:12px;padding:9px 12px;font-weight:600;font-size:14px;color:var(--ink)}
+.step em{font-style:normal;width:24px;height:24px;border-radius:50%;background:var(--ink);color:#fff;display:grid;place-items:center;font-size:12px;flex:none}
+.step.warn em{background:#C8102E}
+.led{padding:14px;display:flex;flex-direction:column;gap:8px}
+.ledbox{background:#05090F;border-radius:8px;padding:12px;font-family:var(--f-mono);font-weight:600;color:#3A4A5C;letter-spacing:.08em;font-size:15px;text-align:center;min-height:62px;display:grid;place-items:center;text-transform:uppercase}
+.ledbox.on{color:var(--amber);text-shadow:0 0 8px rgba(242,179,61,.6)}
+
+/* kpis */
+.kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}
+.kpi{padding:14px 16px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.kpi .v{font-family:var(--f-display);font-size:34px;line-height:1.05;font-variant-numeric:tabular-nums}
+.kpi .n{color:var(--muted);font-size:13px}
+.kpi.today .v{color:var(--fg)}
+.kpi.lh .v{color:var(--green)}
+.kpi.save{background:var(--green-soft);border-color:rgba(47,210,122,.35)}
+.kpi.save .v{color:var(--green)}
+
+.result{padding:14px 18px;display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;background:var(--green-soft);border-color:rgba(47,210,122,.35)}
+.result strong{font-family:var(--f-display);font-size:24px;letter-spacing:.01em}
+.result span{color:var(--muted);font-size:14px}
+
+/* bottom */
+.bottom{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:16px;align-items:start}
+.pad{padding:14px 16px}
+.pad h3{font-family:var(--f-display);font-size:20px;margin:0 0 2px;letter-spacing:.02em}
+.pad .sub{color:var(--muted);font-size:13px;margin:0 0 10px}
+.tablewrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums}
+th{text-align:left;font-family:var(--f-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:400;padding:6px 8px;border-bottom:1px solid var(--line)}
+td{padding:8px;border-bottom:1px solid var(--line);white-space:nowrap}
+td.mono{font-family:var(--f-mono);font-size:13px}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600}
+.chip i{width:8px;height:8px;border-radius:50%}
+.chip.green{background:var(--green-soft);color:var(--green)} .chip.green i{background:var(--green)}
+.chip.red{background:var(--red-soft);color:#FF8A9A} .chip.red i{background:var(--red)}
+.chip.amber{background:var(--amber-soft);color:var(--amber)} .chip.amber i{background:var(--amber)}
+.act{color:var(--muted)}
+.act.hot{color:var(--fg);font-weight:600}
+.log{list-style:none;margin:0;padding:0;max-height:300px;overflow:auto;display:flex;flex-direction:column}
+.log li{display:grid;grid-template-columns:52px 64px minmax(0,1fr);gap:8px;padding:7px 0;border-bottom:1px solid var(--line);font-size:13.5px}
+.log time{font-family:var(--f-mono);color:var(--muted);font-size:12.5px}
+.log .who{font-family:var(--f-mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;align-self:start;padding-top:2px}
+.log .who.lh{color:var(--green)} .log .who.today{color:var(--muted)} .log .who.sys{color:var(--amber)}
+.note{color:var(--dim);font-size:12.5px;margin:0}
+
+@media (max-width:1050px){.kpis{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:900px){.main,.bottom{grid-template-columns:minmax(0,1fr)}.side{display:grid;grid-template-columns:minmax(0,1fr)}}
+@media (max-width:560px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.brand h1{font-size:26px}.spacer{display:none}}
+@media (prefers-reduced-motion:reduce){.status.live i{animation:none}*{transition:none!important}}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <div class="mark" aria-hidden="true">
+        <svg width="26" height="26" viewBox="0 0 26 26"><rect x="8" y="1" width="10" height="24" rx="4" fill="#0B1A2B" stroke="#25425F"/><circle cx="13" cy="7" r="3" fill="#5F7690"/><circle cx="13" cy="13" r="3" fill="#5F7690"/><circle cx="13" cy="19" r="3" fill="#2FD27A"/></svg>
+      </div>
+      <div>
+        <h1>Laluan Hijau Control Room</h1>
+        <p>Prototype · Team Bikai, UiTM Shah Alam · Sime Darby Property University Hackathon 2026</p>
+      </div>
+    </div>
+    <div class="status live" id="status" role="status"><i></i><span id="statusText">Emergency active</span></div>
+  </header>
+
+  <div class="controls">
+    <button class="btn primary" id="btnDispatch">Restart P1 run</button>
+    <button class="btn" id="btnPause" aria-pressed="false">Pause</button>
+    <button class="btn" id="btnNew">New traffic scenario</button>
+    <div class="seg" role="group" aria-label="Simulation speed">
+      <button data-speed="1" aria-pressed="false">1×</button>
+      <button data-speed="4" aria-pressed="true">4×</button>
+      <button data-speed="8" aria-pressed="false">8×</button>
+    </div>
+    <span class="spacer"></span>
+    <button class="toggle" id="btnLost" aria-pressed="false"><span class="sw" aria-hidden="true"></span>Simulate network outage</button>
+  </div>
+
+  <section class="main">
+    <div class="panel sim">
+      <div class="sim-head">
+        <h2>Same ambulance, same traffic, two outcomes</h2>
+        <span class="label">Elmina → Hospital Sungai Buloh · 6.2 km · 6 junctions (illustrative)</span>
+      </div>
+      <canvas id="cv" height="360" aria-label="Live simulation of two ambulance runs along the same corridor"></canvas>
+      <div class="legend">
+        <span><b style="background:var(--green)"></b>Green held for ambulance</span>
+        <span><b style="background:var(--amber)"></b>Clearing crossing traffic</span>
+        <span><b style="background:var(--red)"></b>Red light</span>
+        <span><b style="background:var(--red-soft);border:1px dashed var(--red)"></b>Alert zone (drivers notified)</span>
+        <span><b style="background:#6D7F94"></b>Vehicles · upper lane is the left lane</span>
+      </div>
+    </div>
+
+    <aside class="side">
+      <div class="phone" aria-label="Driver phone view">
+        <div class="screen" id="screen">
+          <div class="sbar"><span id="pClock">9:41</span><span>Laluan Hijau</span></div>
+          <div class="minimap" aria-hidden="true">
+            <div class="rd"></div>
+            <div class="amb" id="mAmb" style="left:-40px"></div>
+            <div class="you" id="mYou" style="left:180px"></div>
+            <div class="tag" style="left:178px;top:22px" id="mTag">You</div>
+          </div>
+          <div id="pBody"></div>
+        </div>
+      </div>
+      <div class="panel led">
+        <span class="label">Roadside LED sign</span>
+        <div class="ledbox" id="led">— no emergency —</div>
+      </div>
+    </aside>
+  </section>
+
+  <section class="kpis">
+    <div class="panel kpi today"><span class="label">Today · siren only</span><span class="v" id="kToday">00:00</span><span class="n" id="kTodayN">trip time</span></div>
+    <div class="panel kpi lh"><span class="label">With Laluan Hijau</span><span class="v" id="kLH">00:00</span><span class="n" id="kLHN">trip time</span></div>
+    <div class="panel kpi save"><span class="label">Time recovered</span><span class="v" id="kSave">—</span><span class="n">for the patient on this run</span></div>
+    <div class="panel kpi"><span class="label">Red-light stops</span><span class="v" id="kStops">0 vs 0</span><span class="n">today vs Laluan Hijau</span></div>
+    <div class="panel kpi"><span class="label">Drivers alerted</span><span class="v" id="kAlerts">0</span><span class="n">in-app + LED signs</span></div>
+  </section>
+
+  <section class="panel result" id="result" hidden>
+    <strong id="resHead"></strong>
+    <span id="resSub"></span>
+  </section>
+
+  <section class="bottom">
+    <div class="panel pad">
+      <h3>AI junction planner</h3>
+      <p class="sub">Predicted arrival at each junction. Green is requested when the ETA falls inside the time needed to clear the queue, kept within 30–60 s.</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Junction</th><th>Distance</th><th>ETA</th><th>Queue</th><th>Window</th><th>Signal</th><th>Action</th></tr></thead>
+          <tbody id="jt"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="panel pad">
+      <h3>Event log</h3>
+      <p class="sub">Every request is logged for MOH and the council.</p>
+      <ul class="log" id="log"></ul>
+    </div>
+  </section>
+
+  <p class="note">Prototype simulation. Corridor length, signal timings, queue rates and driver behaviour are illustrative assumptions, not measured Elmina data. Phase 0 of the rollout replaces them with real measurements.</p>
+</div>
+
+<script>
+(() => {
+  // ---------- model constants ----------
+  const L = 6200;                                   // corridor length (m)
+  const JX = [700, 1650, 2550, 3500, 4450, 5400];   // junction positions (m)
+  const CYCLE = 90, G = 38, A = 3;                  // signal cycle (s)
+  const VMAX = 16.7, ACC = 2.4, DEC = 4.0;          // ambulance (60 km/h)
+  const ARR = 0.12, DIS = 0.45, QCAP = 10;          // queue arrival / discharge (cars/s)
+  const CAR_M = 7;                                  // queue spacing (m)
+  const DT = 0.1;
+  const BLOCKERS = [JX[0] + 300, JX[2] + 260, JX[4] + 280];
+
+  // ---------- seeded random ----------
+  let seed = 20261023;
+  function rng(s){ return function(){ s|=0; s=s+0x6D2B79F5|0; let t=Math.imul(s^s>>>15,1|s); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+
+  // ---------- state ----------
+  let T, lanes, logItems, alerts, running, paused, speed = 4, connLost = false, phone, finished;
+
+  function makeLane(mode, r, scen){
+    return {
+      mode,
+      amb:{x:0, v:0, done:false, t:0, stops:0, waiting:null, qAhead:0, released:null},
+      J: JX.map((x,i)=>({x, i, off:scen.off[i], queue:scen.q[i], pre:null, requested:false, passed:false, stopCounted:false, eta:null, win:null, action:'Monitoring'})),
+      B: BLOCKERS.map((p,i)=>({p, x:p, v:7, state:'waiting', lane:0, tail:0, hold:scen.hold[i], alertT:null}))
+    };
+  }
+
+  function reset(newScenario){
+    if (newScenario) seed = Math.floor(Math.random()*1e9);
+    const r = rng(seed);
+    const scen = {
+      off: JX.map(()=>Math.floor(r()*CYCLE)),
+      q: JX.map(()=>2 + Math.floor(r()*5)),
+      hold: BLOCKERS.map(()=>6 + r()*6)
+    };
+    T = 0; alerts = 0; finished = false;
+    lanes = [makeLane('today', r, scen), makeLane('lh', r, scen)];
+    logItems = [];
+    phone = {kind:'idle', ref:null, until:0, lane:null};
+    running = true; paused = false;
+    btnPause.textContent = 'Pause'; btnPause.setAttribute('aria-pressed','false');
+    resultEl.hidden = true;
+    log('sys', 'P1 call assigned by MERS 999. Ambulance WMB 999 verified, “Emergency active”.');
+    log('lh', 'Route locked: Elmina → Hospital Sungai Buloh, 6 signalised junctions.');
+    if (connLost) log('sys', 'Network outage active. Junctions run their normal cycle; siren detectors on standby.');
+    drawAll(true);
+  }
+
+  // ---------- signals ----------
+  function base(j, t){ const c = ((t + j.off) % CYCLE + CYCLE) % CYCLE; return c < G ? 'green' : c < G + A ? 'amber' : 'red'; }
+  function main(lane, j, t){
+    if (j.pre){ if (j.pre.phase === 'clearing') return 'clearing'; return 'green'; }
+    return base(j, t);
+  }
+  const isGreen = s => s === 'green';
+
+  // ---------- log ----------
+  function fmt(s){ s = Math.max(0, Math.round(s)); return String(Math.floor(s/60)).padStart(2,'0') + ':' + String(s%60).padStart(2,'0'); }
+  function log(who, msg){ logItems.unshift({t:T, who, msg}); if (logItems.length > 80) logItems.pop(); logDirty = true; }
+  let logDirty = true;
+
+  // ---------- step ----------
+  function step(){
+    T += DT;
+    for (const lane of lanes){
+      const a = lane.amb;
+      const smart = lane.mode === 'lh' && !connLost;
+
+      // queues
+      for (const j of lane.J){
+        const s = main(lane, j, T);
+        if (isGreen(s)) j.queue = Math.max(0, j.queue - DIS*DT);
+        else j.queue = Math.min(QCAP, j.queue + ARR*DT);
+      }
+
+      if (a.done) continue;
+      a.t += DT;
+
+      // AI preemption (Laluan Hijau lane)
+      if (lane.mode === 'lh'){
+        for (const j of lane.J){
+          if (j.passed) continue;
+          const dist = j.x - a.x;
+          j.eta = dist / 15;
+          const clearT = j.queue / DIS + 6;
+          j.win = Math.min(60, Math.max(30, clearT + 8));
+          if (smart && !j.requested && j.eta <= j.win){
+            j.requested = true;
+            const b = base(j, T);
+            j.pre = b === 'green' ? {phase:'green', t:0} : {phase:'clearing', t:0};
+            const n = Math.ceil(j.queue) * 2 + 3;
+            alerts += n;
+            j.action = b === 'green' ? 'Green held' : 'Clearing';
+            log('lh', `J${j.i+1}: ETA ${Math.round(j.eta)} s, ${Math.ceil(j.queue)} cars queued. Green requested (window ${Math.round(j.win)} s).`);
+            log('lh', `J${j.i+1}: alert sent to ${n} drivers; LED sign on.`);
+            setPhone('junction', j, lane);
+          }
+          // backup siren detector during outage
+          if (!smart && !j.pre && !j.requested && dist < 80 && dist > 0 && !isGreen(base(j,T))){
+            j.requested = true; j.pre = {phase:'clearing', t:0, backup:true};
+            j.action = 'Backup: clearing';
+            log('sys', `J${j.i+1}: siren detector triggered at 80 m (backup). Late, but never worse than today.`);
+          }
+          if (j.pre){
+            j.pre.t += DT;
+            if (j.pre.phase === 'clearing' && j.pre.t >= 5){
+              j.pre.phase = 'green'; j.pre.t = 0; j.action = 'Green held';
+              if (!j.pre.backup) log('lh', `J${j.i+1}: crossing traffic amber → all-red → green held for ambulance.`);
+            }
+          }
+        }
+      }
+
+      // blockers (slow drivers mid-block)
+      for (const b of lane.B){
+        if (b.state === 'waiting' && a.x >= b.p - 170){
+          b.state = 'driving'; b.x = b.p;
+          if (smart){
+            b.alertT = T; alerts += 1;
+            log('lh', `Driver ${Math.round(b.p/100)/10} km ahead alerted: “Ambulance behind you, keep left”.`);
+            setPhone('road', b, lane);
+          }
+        }
+        if (b.state === 'driving' || b.state === 'moving' || b.state === 'moved'){
+          b.x += b.v * DT;
+          if (b.state === 'driving' && b.alertT !== null && T - b.alertT > 3) b.state = 'moving';
+          if (b.state === 'moving'){ b.lane = Math.min(1, b.lane + DT/2); if (b.lane >= 1) b.state = 'moved'; }
+          if (b.x > b.p + 750) b.state = 'gone';
+        }
+      }
+
+      // ambulance target speed
+      let vT = VMAX;
+      for (const b of lane.B){
+        if ((b.state === 'driving' || (b.state === 'moving' && b.lane < .5)) && b.x > a.x){
+          const gap = b.x - a.x - 8;
+          if (gap < 22){
+            vT = Math.min(vT, b.v);
+            b.tail += DT;
+            if (b.tail > b.hold && b.state === 'driving'){
+              b.state = 'moving';
+              if (lane.mode === 'today') log('today', `Driver ahead finally heard the siren after ${Math.round(b.tail)} s and moved left.`);
+              else log('sys', `Driver ahead had no alert (outage) and moved left after ${Math.round(b.tail)} s.`);
+            }
+          }
+        }
+      }
+
+      // junction constraint
+      const J = lane.J.find(j => !j.passed);
+      if (J){
+        const s = main(lane, J, T);
+        const green = isGreen(s);
+        let stopLine = null;
+        if (a.waiting === J){
+          if (green) a.qAhead = Math.max(0, a.qAhead - DIS*1.3*DT);
+          if (green && a.qAhead <= 0.05){ a.waiting = null; a.released = J; }
+          else stopLine = J.x - 5 - a.qAhead*CAR_M;
+        } else {
+          const qLen = a.released === J ? 0 : J.queue*CAR_M;
+          const near = J.x - a.x < qLen + 45;
+          if (!green || (a.released !== J && J.queue > 0.6 && near)){
+            stopLine = J.x - 5 - qLen;
+            if (stopLine - a.x < 1.5 && a.v < 3){ a.waiting = J; a.qAhead = J.queue; }
+          }
+        }
+        if (stopLine !== null){
+          const d = stopLine - a.x;
+          vT = Math.min(vT, Math.sqrt(Math.max(0, 2*DEC*(d - 0.5))));
+          if (d < 0.5){ a.v = 0; vT = 0; }
+          if (!green && a.v < 0.3 && !J.stopCounted){
+            J.stopCounted = true; a.stops++;
+            if (lane.mode === 'today') log('today', `Stopped at red light J${J.i+1} behind ${Math.ceil(J.queue)} cars.`);
+            else log('sys', `Stopped at J${J.i+1} (no preemption during outage).`);
+          }
+        } else if (J.x - a.x < 30){ vT = Math.min(vT, 13); }
+      }
+
+      // integrate
+      const dv = vT - a.v;
+      a.v += Math.max(-DEC*1.5*DT, Math.min(ACC*DT, dv));
+      a.v = Math.max(0, a.v);
+      a.x += a.v * DT;
+
+      for (const j of lane.J){
+        if (!j.passed && a.x > j.x + 3){
+          j.passed = true; j.eta = 0; a.waiting = (a.waiting === j) ? null : a.waiting;
+          if (lane.mode === 'lh'){
+            j.action = 'Passed';
+            if (j.pre){ j.pre.restoreAt = T + 2; log('lh', `J${j.i+1}: ambulance through at ${Math.round(a.v*3.6)} km/h. Normal cycle restored.`); }
+          } else if (!j.stopCounted){
+            log('today', `Through J${j.i+1} on a green.`);
+          }
+        }
+        if (j.pre && j.pre.restoreAt && T >= j.pre.restoreAt){ j.pre = null; j.action = 'Restored'; }
+      }
+
+      if (a.x >= L){
+        a.x = L; a.done = true;
+        log(lane.mode === 'lh' ? 'lh' : 'today', `Arrived at hospital in ${fmt(a.t)}.`);
+      }
+    }
+
+    if (lanes.every(l => l.amb.done) && !finished){ finished = true; running = false; onFinish(); }
+    if (phone.until && T > phone.until){ phone = {kind:'idle', ref:null, until:0}; }
+  }
+
+  function setPhone(kind, ref, lane){ phone = {kind, ref, lane, until:0, passedAt:null}; }
+
+  // ---------- finish ----------
+  function onFinish(){
+    const [td, lh] = lanes.map(l => l.amb);
+    const saved = td.t - lh.t;
+    resHead.textContent = saved > 1 ? `Laluan Hijau arrived ${fmt(saved)} earlier` : 'Both runs arrived at the same time';
+    resSub.textContent = `${fmt(lh.t)} vs ${fmt(td.t)} today · ${td.stops - lh.stops} red-light stops avoided · ${alerts} drivers alerted. Without CPR, cardiac-arrest survival drops 7–10% for every minute of delay (AHA).`;
+    resultEl.hidden = false;
+    log('sys', `Run complete. Time recovered: ${fmt(Math.max(0,saved))}.`);
+  }
+
+  // ---------- DOM refs ----------
+  const $ = id => document.getElementById(id);
+  const cv = $('cv'), ctx = cv.getContext('2d');
+  const btnDispatch = $('btnDispatch'), btnPause = $('btnPause'), btnNew = $('btnNew'), btnLost = $('btnLost');
+  const resultEl = $('result'), resHead = $('resHead'), resSub = $('resSub');
+
+  // ---------- canvas ----------
+  let W = 800, H = 360, DPR = 1;
+  function resize(){
+    DPR = Math.min(2, window.devicePixelRatio || 1);
+    W = cv.clientWidth; H = W < 600 ? 300 : 360;
+    cv.width = W*DPR; cv.height = H*DPR; cv.style.height = H + 'px';
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+  }
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  let C = {};
+  function readColors(){ ['--bg','--panel','--panel-2','--line','--fg','--muted','--dim','--red','--green','--amber','--road','--lane'].forEach(k=>C[k]=css(k)); }
+
+  function rr(x,y,w,h,r){ ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x,y,w,h,r) : ctx.rect(x,y,w,h); }
+
+  function drawLane(lane, top, lh){
+    const padL = W < 600 ? 38 : 64, padR = W < 600 ? 34 : 56;
+    const px = x => padL + x / L * (W - padL - padR);
+    const y = top + lh*0.58, rw = W < 600 ? 13 : 16; // half road width
+    const small = W < 600;
+
+    // panel bg
+    ctx.fillStyle = C['--panel-2']; rr(0, top+4, W, lh-8, 10); ctx.fill();
+
+    // title + timer
+    ctx.font = `700 ${small?13:15}px Barlow, Arial`; ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
+    ctx.fillStyle = lane.mode === 'lh' ? C['--green'] : C['--fg'];
+    ctx.fillText(lane.mode === 'lh' ? 'WITH LALUAN HIJAU' : 'TODAY · SIREN ONLY', 12, top + 24);
+    if (lane.mode === 'lh' && connLost){ ctx.fillStyle = C['--amber']; ctx.fillText('  · NETWORK OUTAGE (fail-safe)', 12 + ctx.measureText('WITH LALUAN HIJAU').width, top+24); }
+    ctx.textAlign = 'right'; ctx.font = `600 ${small?13:15}px "IBM Plex Mono", monospace`;
+    ctx.fillStyle = lane.amb.done ? C['--green'] : C['--fg'];
+    ctx.fillText(lane.amb.done ? 'ARRIVED ' + fmt(lane.amb.t) : fmt(lane.amb.t) + `  ·  ${Math.round(lane.amb.v*3.6)} km/h`, W - 12, top + 24);
+    ctx.textAlign = 'left';
+
+    // cross streets
+    for (const j of lane.J){ ctx.fillStyle = C['--road']; ctx.fillRect(px(j.x) - 7, top + 34, 14, lh - 42); }
+    // road
+    ctx.fillStyle = C['--road']; ctx.fillRect(0, y - rw, W, rw*2);
+    ctx.strokeStyle = C['--lane']; ctx.setLineDash([10,9]); ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); ctx.setLineDash([]);
+
+    const a = lane.amb;
+    // geofence + green path
+    if (lane.mode === 'lh' && !connLost && !a.done){
+      const x0 = px(a.x) + 12, x1 = px(Math.min(L, a.x + 420));
+      ctx.fillStyle = 'rgba(227,38,63,.13)';
+      ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y - rw - 10); ctx.lineTo(x1, y + rw + 10); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = 'rgba(227,38,63,.6)'; ctx.setLineDash([5,4]); ctx.stroke(); ctx.setLineDash([]);
+      const held = lane.J.filter(j => !j.passed && j.pre && j.pre.phase === 'green');
+      if (held.length){
+        const far = Math.max(...held.map(j => j.x));
+        ctx.strokeStyle = 'rgba(47,210,122,.55)'; ctx.lineWidth = 4; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(px(a.x) + 14, y + rw*0.5); ctx.lineTo(px(far) + 8, y + rw*0.5); ctx.stroke(); ctx.lineCap = 'butt';
+      }
+    }
+
+    // junctions: queue + signal
+    for (const j of lane.J){
+      const s = main(lane, j, T), jx = px(j.x);
+      const col = s === 'green' ? C['--green'] : s === 'red' ? C['--red'] : C['--amber'];
+      // queue cars (both lanes)
+      const qFront = (a.waiting === j) ? a.qAhead : j.queue;
+      const nLow = Math.ceil(qFront - 0.05), nUp = Math.round(j.queue*0.8);
+      ctx.fillStyle = '#6D7F94';
+      const cw = small ? 7 : 9, sp = small ? 9 : 11;
+      for (let k=0;k<nLow;k++) { rr(jx - 10 - (k+1)*sp, y + rw*0.5 - 3.5, cw, 7, 2); ctx.fill(); }
+      for (let k=0;k<nUp;k++)  { rr(jx - 10 - (k+1)*sp, y - rw*0.5 - 3.5, cw, 7, 2); ctx.fill(); }
+      // signal head
+      const sx = jx + 10, sy = y - rw - 30;
+      ctx.fillStyle = '#05090F'; rr(sx - 6, sy, 12, 24, 3); ctx.fill();
+      ctx.fillStyle = s === 'red' || s === 'clearing' ? C['--red'] : '#2A3646'; ctx.beginPath(); ctx.arc(sx, sy + 6.5, 3.6, 0, 7); ctx.fill();
+      ctx.fillStyle = s === 'green' ? C['--green'] : '#2A3646'; ctx.beginPath(); ctx.arc(sx, sy + 17.5, 3.6, 0, 7); ctx.fill();
+      if (j.pre && !j.passed){
+        ctx.strokeStyle = j.pre.phase === 'green' ? C['--green'] : C['--amber']; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(jx, y, rw + 8, 0, 7); ctx.stroke();
+        if (!small){
+          ctx.font = '600 11px "IBM Plex Mono", monospace'; ctx.fillStyle = j.pre.phase === 'green' ? C['--green'] : C['--amber'];
+          ctx.textAlign = 'center'; ctx.fillText(j.pre.phase === 'green' ? 'GREEN HELD' : 'CLEARING', jx, sy - 6); ctx.textAlign = 'left';
+        }
+      }
+      // label
+      ctx.font = `600 ${small?10:12}px "IBM Plex Mono", monospace`; ctx.fillStyle = C['--muted']; ctx.textAlign = 'center';
+      ctx.fillText('J' + (j.i+1), jx, y + rw + 18); ctx.textAlign = 'left';
+      void col;
+    }
+
+    // endpoints
+    ctx.font = `600 ${small?10:11}px Barlow, Arial`; ctx.fillStyle = C['--muted'];
+    if (!small){ ctx.fillText('Elmina', 8, y + rw + 18); }
+    const hx = W - padR + 10;
+    ctx.fillStyle = '#E8EEF5'; rr(hx, y - 14, 28, 28, 5); ctx.fill();
+    ctx.fillStyle = C['--red']; ctx.fillRect(hx + 11, y - 9, 6, 18); ctx.fillRect(hx + 5, y - 3, 18, 6);
+
+    // blockers
+    for (const b of lane.B){
+      if (b.state === 'waiting' || b.state === 'gone') continue;
+      const bx = px(b.x), by = y + rw*0.5 - b.lane*rw;
+      ctx.fillStyle = '#9AA9BA'; rr(bx - 8, by - 4.5, 16, 9, 2); ctx.fill();
+      if (b.alertT !== null && lane.mode === 'lh'){ ctx.fillStyle = C['--red']; ctx.beginPath(); ctx.arc(bx, by - 8, 3, 0, 7); ctx.fill(); }
+    }
+
+    // ambulance (drawn behind any queue it waits in)
+    let ax = px(a.x);
+    const J = lane.J.find(j => !j.passed);
+    if (J && !a.done){
+      const q = a.waiting === J ? a.qAhead : (a.released === J ? 0 : (J.x - a.x < J.queue*CAR_M + 45 ? J.queue : 0));
+      const n = Math.ceil(q - 0.05);
+      if (n > 0) ax = Math.min(ax, px(J.x) - 10 - n*(small?9:11) - 14);
+    }
+    const ay = y + rw*0.5;
+    ctx.fillStyle = '#FFFFFF'; rr(ax - 13, ay - 6, 26, 12, 3); ctx.fill();
+    ctx.fillStyle = C['--red']; ctx.fillRect(ax - 3, ay - 4.5, 6, 9); ctx.fillRect(ax - 6, ay - 1.5, 12, 3);
+    if (!a.done){
+      const on = Math.floor(performance.now()/180) % 2;
+      ctx.fillStyle = on ? '#FF3B57' : '#3BA0FF'; ctx.beginPath(); ctx.arc(ax + 8, ay - 8, 2.6, 0, 7); ctx.fill();
+    }
+  }
+
+  function drawAll(){
+    readColors();
+    ctx.clearRect(0,0,W,H);
+    const lh = H/2;
+    drawLane(lanes[0], 0, lh);
+    drawLane(lanes[1], lh, lh);
+  }
+
+  // ---------- panels ----------
+  const jt = $('jt'), logEl = $('log');
+  function chip(s){
+    const m = {green:['green','Green'], red:['red','Red'], amber:['amber','Amber'], clearing:['amber','Clearing']}[s];
+    return `<span class="chip ${m[0]}"><i></i>${m[1]}</span>`;
+  }
+  function renderPanels(){
+    const [td, lh] = lanes;
+    $('kToday').textContent = fmt(td.amb.t);
+    $('kTodayN').textContent = td.amb.done ? 'arrived at hospital' : 'trip time, still en route';
+    $('kLH').textContent = fmt(lh.amb.t);
+    $('kLHN').textContent = lh.amb.done ? 'arrived at hospital' : 'trip time, still en route';
+    $('kSave').textContent = (td.amb.done && lh.amb.done) ? fmt(Math.max(0, td.amb.t - lh.amb.t)) : (lh.amb.done ? '+' + fmt(T - lh.amb.t) : '—');
+    $('kStops').textContent = `${td.amb.stops} vs ${lh.amb.stops}`;
+    $('kAlerts').textContent = alerts;
+
+    const st = $('status'), stt = $('statusText');
+    st.className = 'status ' + (connLost ? 'lost' : finished ? 'done' : 'live');
+    stt.textContent = connLost ? 'Network outage · fail-safe' : finished ? 'Run complete' : paused ? 'Paused' : 'Emergency active';
+
+    jt.innerHTML = lh.J.map(j => {
+      const s = main(lh, j, T);
+      const dist = Math.max(0, j.x - lh.amb.x);
+      const hot = !j.passed && j.pre;
+      return `<tr><td class="mono">J${j.i+1}</td><td class="mono">${j.passed ? '—' : Math.round(dist) + ' m'}</td>
+        <td class="mono">${j.passed ? '—' : Math.round(dist/15) + ' s'}</td><td class="mono">${Math.ceil(j.queue - 0.05)}</td>
+        <td class="mono">${j.passed ? '—' : Math.round(Math.min(60, Math.max(30, j.queue/DIS + 14))) + ' s'}</td>
+        <td>${chip(s)}</td><td class="act ${hot ? 'hot' : ''}">${j.action}</td></tr>`;
+    }).join('');
+
+    if (logDirty){
+      logEl.innerHTML = logItems.map(l => `<li><time>${fmt(l.t)}</time><span class="who ${l.who}">${l.who === 'lh' ? 'Laluan' : l.who === 'today' ? 'Today' : 'System'}</span><span>${l.msg}</span></li>`).join('');
+      logDirty = false;
+    }
+
+    // LED sign
+    const led = $('led');
+    const active = lh.J.find(j => !j.passed && j.pre && !j.pre.backup);
+    if (active && !connLost){ led.className = 'ledbox on'; led.textContent = `J${active.i+1} · Ambulance ${Math.max(0, Math.round((active.x - lh.amb.x)/15))}s · Keep left`; }
+    else { led.className = 'ledbox'; led.textContent = connLost ? 'Link down · normal cycle' : '— no emergency —'; }
+
+    renderPhone();
+  }
+
+  function renderPhone(){
+    const body = $('pBody'), lh = lanes[1], a = lh.amb;
+    const mYou = $('mYou'), mAmb = $('mAmb'), mTag = $('mTag');
+    let html = '';
+    const mapW = 280;
+    if (phone.kind === 'idle' || connLost){
+      mAmb.style.left = '-40px'; mYou.style.left = '150px'; mYou.style.top = '44px'; mTag.style.left = '148px'; mTag.style.top = '22px';
+      html = `<div class="card"><div class="k">Navigation</div><div class="h">Persiaran Elmina towards Sungai Buloh</div><div class="s" style="color:var(--ink-2)">${connLost ? 'Alerts unavailable during the outage. Listen for sirens.' : 'No emergency vehicles nearby.'}</div></div>
+        <div class="steps"><div class="step"><em>i</em>Alerts appear here when an ambulance is behind you</div></div>`;
+    } else {
+      const ref = phone.ref;
+      const youX = ref.x;
+      const passed = a.x > youX + 6 || a.done;
+      if (passed && phone.passedAt === null) phone.passedAt = T;
+      if (phone.passedAt !== null && T - phone.passedAt > 8){ phone = {kind:'idle', ref:null, until:0}; return renderPhone(); }
+      const gap = Math.max(0, youX - a.x);
+      const closing = Math.max(1.5, a.v - (phone.kind === 'road' ? ref.v : 0));
+      const secs = phone.kind === 'junction' ? gap/15 : gap/closing;
+      // minimap: ambulance relative to you over a 300 m window
+      const rel = Math.min(1, gap / 300);
+      mYou.style.left = '200px';
+      mTag.style.left = '198px';
+      const moved = phone.kind === 'road' && ref.lane > .4;
+      mYou.style.top = moved ? '28px' : '44px'; mTag.style.top = moved ? '10px' : '22px';
+      mAmb.style.left = (200 - 28 - rel*170) + 'px';
+      if (passed){
+        html = `<div class="card ok"><div class="k" style="color:#1E8A50">All clear</div><div class="h">Ambulance has passed</div><div class="s" style="color:var(--ink-2)">Thanks for clearing the way. Resume normal driving.</div></div>`;
+      } else if (phone.kind === 'road'){
+        html = `<div class="card alert"><div class="k">Emergency · ambulance behind you</div><div class="big">${secs < 1 ? 'Now' : Math.ceil(secs) + ' s'}</div><div class="h">Move left, slow down</div><div class="s">Do not run the red light. Signals ahead are being cleared.</div></div>
+          <div class="steps"><div class="step"><em>1</em>Signal left, ease into the left lane</div><div class="step"><em>2</em>Keep moving if your light is green</div><div class="step warn"><em>!</em>Never stop inside the junction</div></div>`;
+      } else {
+        html = `<div class="card alert"><div class="k">Emergency · ambulance approaching J${ref.i+1}</div><div class="big">${secs < 1 ? 'Now' : Math.ceil(secs) + ' s'}</div><div class="h">Your light is turning green</div><div class="s">Move through the junction and keep left. Do not run a red light.</div></div>
+          <div class="steps"><div class="step"><em>1</em>Drive through when your light is green</div><div class="step"><em>2</em>After the junction, keep left</div><div class="step warn"><em>!</em>Never stop inside the junction</div></div>`;
+      }
+      void mapW;
+    }
+    if (body.dataset.html !== html){ body.innerHTML = html; body.dataset.html = html; }
+    const now = new Date(); $('pClock').textContent = now.getHours() + ':' + String(now.getMinutes()).padStart(2,'0');
+  }
+
+  // ---------- loop ----------
+  let last = performance.now(), acc = 0, panelT = 0;
+  function frame(now){
+    const dt = Math.min(0.1, (now - last)/1000); last = now;
+    if (running && !paused){
+      acc += dt * speed;
+      while (acc >= DT && running){ step(); acc -= DT; }
+    }
+    drawAll();
+    panelT += dt;
+    if (panelT > 0.2){ renderPanels(); panelT = 0; }
+    requestAnimationFrame(frame);
+  }
+
+  // ---------- controls ----------
+  btnDispatch.addEventListener('click', () => reset(false));
+  btnNew.addEventListener('click', () => reset(true));
+  btnPause.addEventListener('click', () => {
+    if (finished) return;
+    paused = !paused; btnPause.textContent = paused ? 'Resume' : 'Pause'; btnPause.setAttribute('aria-pressed', String(paused)); renderPanels();
+  });
+  document.querySelectorAll('.seg button').forEach(b => b.addEventListener('click', () => {
+    speed = +b.dataset.speed;
+    document.querySelectorAll('.seg button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+  }));
+  btnLost.addEventListener('click', () => {
+    connLost = !connLost; btnLost.setAttribute('aria-pressed', String(connLost));
+    if (connLost){
+      const lh = lanes[1];
+      lh.J.forEach(j => { if (j.pre && !j.passed){ j.pre = null; j.action = 'Fail-safe: normal cycle'; } });
+      log('sys', 'Network outage: all priority requests dropped. Junctions back on normal cycle, nothing stuck on green.');
+    } else {
+      log('sys', 'Network restored. AI planner and driver alerts back online.');
+    }
+    renderPanels();
+  });
+  window.addEventListener('resize', () => { resize(); drawAll(); });
+
+  resize();
+  reset(false);
+  renderPanels();
+  requestAnimationFrame(frame);
+})();
+</script>
+
+</body></html>
