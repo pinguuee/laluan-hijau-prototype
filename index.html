@@ -241,10 +241,11 @@ td.mono{font-family:var(--f-mono);font-size:13px}
   const JX = [700, 1650, 2550, 3500, 4450, 5400];   // junction positions (m)
   const CYCLE = 90, G = 38, A = 3;                  // signal cycle (s)
   const VMAX = 16.7, ACC = 2.4, DEC = 4.0;          // ambulance (60 km/h)
-  const ARR = 0.12, DIS = 0.45, QCAP = 10;          // queue arrival / discharge (cars/s)
-  const CAR_M = 7;                                  // queue spacing (m)
+  const VCAR = 5, CACC = 1.6, CDEC = 4.5;           // peak-hour traffic (~18 km/h)
   const DT = 0.1;
-  const BLOCKERS = [JX[0] + 300, JX[2] + 260, JX[4] + 280];
+  let PXM = 0.134;                                  // drawing scale (px per m), set by resize()
+  let SP = 82, FOLLOW = 190;                        // car spacing and ambulance following gap (m), matched to the drawing
+  function setScale(){ SP = 11 / PXM; FOLLOW = 25 / PXM; }
 
   // ---------- seeded random ----------
   let seed = 20261023;
@@ -253,31 +254,51 @@ td.mono{font-family:var(--f-mono);font-size:13px}
   // ---------- state ----------
   let T, lanes, logItems, alerts, running, paused, speed = 4, connLost = false, phone, finished;
 
-  function makeLane(mode, r, scen){
+  // Every vehicle on the corridor is already there when the run starts: queues at each junction in both lanes,
+  // plus a few cars between junctions. lane 0 = right lane (ambulance's lane), lane 1 = left lane.
+  function makeCars(r){
+    const cars = [];
+    const free = (x, lane) => !cars.some(c => c.lane === lane && Math.abs(c.x - x) < SP);
+    const add = (x, lane) => cars.push({x, lane, lt:lane, v:0, state:'drive', hold:3 + r()*6, tail:0, alertT:null, react:null, gone:false});
+    for (let k = 0; k < JX.length; k++){
+      const line = JX[k] - 6, prev = k === 0 ? FOLLOW + SP : JX[k-1] + SP;
+      for (const lane of [0, 1]){
+        const n = 1 + Math.floor(r()*3);
+        for (let i = 0; i < n; i++){ const x = line - i*SP; if (x > prev) add(x, lane); }
+      }
+      const m = Math.floor(r()*3);
+      for (let i = 0; i < m; i++){
+        const lane = r() < 0.6 ? 0 : 1;
+        const x = prev + r()*Math.max(0, line - prev - SP);
+        if (free(x, lane) && x > prev) add(x, lane);
+      }
+    }
+    return cars;
+  }
+
+  function makeLane(mode, scen){
     return {
       mode,
-      amb:{x:0, v:0, done:false, t:0, stops:0, waiting:null, qAhead:0, released:null},
-      J: JX.map((x,i)=>({x, i, off:scen.off[i], queue:scen.q[i], pre:null, requested:false, passed:false, stopCounted:false, eta:null, win:null, action:'Monitoring'})),
-      B: BLOCKERS.map((p,i)=>({p, x:p, v:7, state:'waiting', lane:0, tail:0, hold:scen.hold[i], alertT:null}))
+      amb:{x:0, v:0, done:false, t:0, stops:0},
+      J: JX.map((x,i)=>({x, i, off:scen.off[i], pre:null, requested:false, passed:false, stopCounted:false, eta:null, win:30, action:'Monitoring'})),
+      cars: scen.cars.map(c => ({...c})),
+      batch:0, batchT:0
     };
   }
 
   function reset(newScenario){
     if (newScenario) seed = Math.floor(Math.random()*1e9);
     const r = rng(seed);
-    const scen = {
-      off: JX.map(()=>Math.floor(r()*CYCLE)),
-      q: JX.map(()=>2 + Math.floor(r()*5)),
-      hold: BLOCKERS.map(()=>6 + r()*6)
-    };
+    const scen = { off: JX.map(()=>Math.floor(r()*CYCLE)) };
+    scen.cars = makeCars(r);
     T = 0; alerts = 0; finished = false;
-    lanes = [makeLane('today', r, scen), makeLane('lh', r, scen)];
+    lanes = [makeLane('today', scen), makeLane('lh', scen)];
     logItems = [];
     phone = {kind:'idle', ref:null, until:0, lane:null};
     running = true; paused = false;
     btnPause.textContent = 'Pause'; btnPause.setAttribute('aria-pressed','false');
     resultEl.hidden = true;
-    log('sys', 'P1 call assigned by MERS 999. Ambulance WMB 999 verified, “Emergency active”.');
+    log('sys', `P1 call assigned by MERS 999. Ambulance WMB 999 verified, “Emergency active”. ${scen.cars.length} vehicles on the corridor.`);
     log('lh', 'Route locked: Elmina → Hospital Sungai Buloh, 6 signalised junctions.');
     if (connLost) log('sys', 'Network outage active. Junctions run their normal cycle; siren detectors on standby.');
     drawAll(true);
@@ -296,6 +317,22 @@ td.mono{font-family:var(--f-mono);font-size:13px}
   function log(who, msg){ logItems.unshift({t:T, who, msg}); if (logItems.length > 80) logItems.pop(); logDirty = true; }
   let logDirty = true;
 
+  // ---------- traffic helpers ----------
+  const inLow = c => c.lt < 0.75;                // occupies the right lane (also mid lane-change)
+  const inUp  = c => c.lt > 0.25 && c.lt < 1.4;  // occupies the left lane
+  const inSh  = c => c.lt > 1.2;                 // on the left shoulder
+  const shares = (c, d) => (inLow(c) && inLow(d)) || (inUp(c) && inUp(d)) || (inSh(c) && inSh(d));
+  function leftLaneFree(lane, c){ return !lane.cars.some(d => d !== c && !d.gone && inUp(d) && Math.abs(d.x - c.x) < SP*0.9); }
+  function shoulderFree(lane, c){ return !lane.cars.some(d => d !== c && !d.gone && inSh(d) && Math.abs(d.x - c.x) < SP*0.9); }
+  function queued(lane, j){ return lane.cars.filter(c => !c.gone && inLow(c) && c.x <= j.x && c.x > j.x - 6*SP && c.v < 1).length; }
+  function nextStop(lane, x){ return lane.J.find(j => j.x - 6 >= x - 0.5); }
+
+  function alertCar(lane, c, delay){
+    if (c.alertT !== null) return;
+    c.alertT = T; c.state = 'alerted'; c.react = T + delay; alerts += 1; lane.batch += 1;
+    if (phone.kind === 'idle' || (phone.passedAt !== null && phone.passedAt !== undefined)) setPhone('road', c, lane);
+  }
+
   // ---------- step ----------
   function step(){
     T += DT;
@@ -303,36 +340,27 @@ td.mono{font-family:var(--f-mono);font-size:13px}
       const a = lane.amb;
       const smart = lane.mode === 'lh' && !connLost;
 
-      // queues
-      for (const j of lane.J){
-        const s = main(lane, j, T);
-        if (isGreen(s)) j.queue = Math.max(0, j.queue - DIS*DT);
-        else j.queue = Math.min(QCAP, j.queue + ARR*DT);
-      }
-
-      if (a.done) continue;
-      a.t += DT;
-
-      // AI preemption (Laluan Hijau lane)
-      if (lane.mode === 'lh'){
+      // ---- AI preemption (Laluan Hijau scenario) ----
+      if (lane.mode === 'lh' && !a.done){
         for (const j of lane.J){
           if (j.passed) continue;
           const dist = j.x - a.x;
           j.eta = dist / 15;
-          const clearT = j.queue / DIS + 6;
-          j.win = Math.min(60, Math.max(30, clearT + 8));
+          const q = queued(lane, j);
+          j.win = Math.min(60, Math.max(30, q*2.2 + 14));
           if (smart && !j.requested && j.eta <= j.win){
             j.requested = true;
             const b = base(j, T);
             j.pre = b === 'green' ? {phase:'green', t:0} : {phase:'clearing', t:0};
-            const n = Math.ceil(j.queue) * 2 + 3;
-            alerts += n;
             j.action = b === 'green' ? 'Green held' : 'Clearing';
-            log('lh', `J${j.i+1}: ETA ${Math.round(j.eta)} s, ${Math.ceil(j.queue)} cars queued. Green requested (window ${Math.round(j.win)} s).`);
-            log('lh', `J${j.i+1}: alert sent to ${n} drivers; LED sign on.`);
+            let n = 0;
+            for (const c of lane.cars){
+              if (!c.gone && c.x > a.x && c.x <= j.x + SP && c.x > j.x - 6*SP){ n++; if (inLow(c)) alertCar(lane, c, 1 + c.hold/6); else if (c.alertT === null){ c.alertT = T; alerts++; } }
+            }
+            log('lh', `J${j.i+1}: ETA ${Math.round(j.eta)} s, ${q} cars queued in the ambulance lane. Green requested (window ${Math.round(j.win)} s).`);
+            log('lh', `J${j.i+1}: alert sent to ${n} drivers at the junction; LED sign on.`);
             setPhone('junction', j, lane);
           }
-          // backup siren detector during outage
           if (!smart && !j.pre && !j.requested && dist < 80 && dist > 0 && !isGreen(base(j,T))){
             j.requested = true; j.pre = {phase:'clearing', t:0, backup:true};
             j.action = 'Backup: clearing';
@@ -348,80 +376,92 @@ td.mono{font-family:var(--f-mono);font-size:13px}
         }
       }
 
-      // blockers (slow drivers mid-block)
-      for (const b of lane.B){
-        if (b.state === 'waiting' && a.x >= b.p - 170){
-          b.state = 'driving'; b.x = b.p;
-          if (smart){
-            b.alertT = T; alerts += 1;
-            log('lh', `Driver ${Math.round(b.p/100)/10} km ahead alerted: “Ambulance behind you, keep left”.`);
-            setPhone('road', b, lane);
+      // ---- every car: notice the ambulance, then move left or forward ----
+      let lead = null;   // nearest car ahead of the ambulance in its lane
+      for (const c of lane.cars){ if (!c.gone && inLow(c) && c.x > a.x && (!lead || c.x < lead.x)) lead = c; }
+      for (const c of lane.cars){
+        if (c.gone || a.done || c.x <= a.x || c.lt >= 1) continue;
+        if (smart && c.state === 'drive' && inLow(c) && (c.x - a.x) / Math.max(1, 15 - c.v) <= 25) alertCar(lane, c, 1.5 + c.hold/5);
+        if (!smart && c.state === 'drive' && c === lead && c.x - a.x - FOLLOW < 4){
+          c.tail += DT;
+          if (c.tail > c.hold){ c.state = 'alerted'; c.react = T; c.noticed = true; }
+        }
+        if ((c.state === 'alerted' && T >= c.react) || c.state === 'forward'){
+          if (leftLaneFree(lane, c)){
+            if (c.noticed && c.tail > 4) log(lane.mode === 'today' ? 'today' : 'sys', `Driver ahead noticed the siren after ${Math.round(c.tail)} s and moved left.`);
+            c.state = 'left';
+          } else if (c.state !== 'forward'){
+            if (c.noticed && c.tail > 4) log(lane.mode === 'today' ? 'today' : 'sys', `Driver ahead noticed after ${Math.round(c.tail)} s; left lane full, so drove forward to make room.`);
+            c.state = 'forward';
           }
         }
-        if (b.state === 'driving' || b.state === 'moving' || b.state === 'moved'){
-          b.x += b.v * DT;
-          if (b.state === 'driving' && b.alertT !== null && T - b.alertT > 3) b.state = 'moving';
-          if (b.state === 'moving'){ b.lane = Math.min(1, b.lane + DT/2); if (b.lane >= 1) b.state = 'moved'; }
-          if (b.x > b.p + 750) b.state = 'gone';
-        }
+      }
+      for (const c of lane.cars){
+        if (c.gone || a.done || c.x <= a.x || c.lt < 0.99 || c.state === 'shoulder' || c.state === 'parked') continue;
+        const near = c.x - a.x;
+        if (smart && c.alertT === null && near / Math.max(1, 15 - c.v) <= 25){ c.alertT = T; alerts += 1; lane.batch += 1; }
+        const ready = smart ? (c.alertT !== null && T - c.alertT > 1 + c.hold/5) : (near < FOLLOW + 2*SP && (c.tail += DT) > c.hold);
+        if (ready && shoulderFree(lane, c)) c.state = 'shoulder';
+      }
+      if (lane.batch && T - lane.batchT > 6){
+        log('lh', `${lane.batch} driver${lane.batch > 1 ? 's' : ''} ahead alerted: “Ambulance behind you, keep left”.`);
+        lane.batch = 0; lane.batchT = T;
       }
 
-      // ambulance target speed
+      // ---- car motion (follow the car ahead, stop at red) ----
+      for (const c of lane.cars){
+        if (c.gone) continue;
+        if (c.state === 'left'){ c.lt = Math.min(1, c.lt + DT/1.5); if (c.lt >= 1){ c.lane = 1; c.state = 'clear'; } }
+        if (c.state === 'shoulder'){ c.lt = Math.min(1.8, c.lt + DT/1.5); if (c.lt >= 1.8) c.state = 'parked'; }
+        if (c.state === 'parked' && (a.done || a.x > c.x + 2*SP) && leftLaneFree(lane, c)) c.state = 'rejoin';
+        if (c.state === 'rejoin'){ c.lt = Math.max(1, c.lt - DT/1.5); if (c.lt <= 1) c.state = 'clear'; }
+        let vT = c.state === 'forward' ? 8 : (c.state === 'shoulder' || c.state === 'parked') ? 1.5 : VCAR;
+        let gap = Infinity;
+        for (const d of lane.cars){
+          if (d === c || d.gone || d.x <= c.x) continue;
+          if (shares(c, d)) gap = Math.min(gap, d.x - c.x - SP);
+        }
+        if (inLow(c) && a.x > c.x && !a.done) gap = Math.min(gap, a.x - c.x - SP);   // never run into the ambulance
+        vT = Math.min(vT, Math.sqrt(2*CDEC*Math.max(0, gap)));
+        const j = nextStop(lane, c.x);
+        if (j){
+          const s = main(lane, j, T), d = j.x - 6 - c.x;
+          if (!isGreen(s) && !(s === 'amber' && d < 8)) vT = Math.min(vT, Math.sqrt(2*CDEC*Math.max(0, d - 0.3)));
+        }
+        c.v += Math.max(-CDEC*1.5*DT, Math.min(CACC*DT, vT - c.v)); c.v = Math.max(0, c.v);
+        c.x += c.v*DT;
+        if (c.x > L - 30) c.gone = true;
+      }
+
+      if (a.done) continue;
+      a.t += DT;
+
+      // ---- ambulance ----
       let vT = VMAX;
-      for (const b of lane.B){
-        if ((b.state === 'driving' || (b.state === 'moving' && b.lane < .5)) && b.x > a.x){
-          const gap = b.x - a.x - 8;
-          if (gap < 22){
-            vT = Math.min(vT, b.v);
-            b.tail += DT;
-            if (b.tail > b.hold && b.state === 'driving'){
-              b.state = 'moving';
-              if (lane.mode === 'today') log('today', `Driver ahead finally heard the siren after ${Math.round(b.tail)} s and moved left.`);
-              else log('sys', `Driver ahead had no alert (outage) and moved left after ${Math.round(b.tail)} s.`);
-            }
-          }
-        }
+      if (lead){
+        const g = lead.x - a.x - FOLLOW;
+        vT = Math.min(vT, lead.v + Math.sqrt(2*DEC*Math.max(0, g)));
+        if (g <= 0){ a.x = Math.min(a.x, lead.x - FOLLOW); vT = Math.min(vT, lead.v); }
       }
-
-      // junction constraint
       const J = lane.J.find(j => !j.passed);
       if (J){
-        const s = main(lane, J, T);
-        const green = isGreen(s);
-        let stopLine = null;
-        if (a.waiting === J){
-          if (green) a.qAhead = Math.max(0, a.qAhead - DIS*1.3*DT);
-          if (green && a.qAhead <= 0.05){ a.waiting = null; a.released = J; }
-          else stopLine = J.x - 5 - a.qAhead*CAR_M;
-        } else {
-          const qLen = a.released === J ? 0 : J.queue*CAR_M;
-          const near = J.x - a.x < qLen + 45;
-          if (!green || (a.released !== J && J.queue > 0.6 && near)){
-            stopLine = J.x - 5 - qLen;
-            if (stopLine - a.x < 1.5 && a.v < 3){ a.waiting = J; a.qAhead = J.queue; }
-          }
+        const s = main(lane, J, T), d = J.x - 6 - a.x;
+        if (!isGreen(s)) vT = Math.min(vT, Math.sqrt(Math.max(0, 2*DEC*(d - 0.5))));
+        else if (J.x - a.x < 30) vT = Math.min(vT, 13);
+        if (!isGreen(s) && a.v < 0.3 && d < FOLLOW + 6*SP && !J.stopCounted){
+          J.stopCounted = true; a.stops++;
+          const n = lane.cars.filter(c => !c.gone && inLow(c) && c.x > a.x && c.x <= J.x).length;
+          if (lane.mode === 'today') log('today', `Stopped at red light J${J.i+1}${n ? ` behind ${n} car${n > 1 ? 's' : ''}` : ''}. Drivers can't run the red to make way.`);
+          else log('sys', `Stopped at J${J.i+1} (no preemption during outage).`);
         }
-        if (stopLine !== null){
-          const d = stopLine - a.x;
-          vT = Math.min(vT, Math.sqrt(Math.max(0, 2*DEC*(d - 0.5))));
-          if (d < 0.5){ a.v = 0; vT = 0; }
-          if (!green && a.v < 0.3 && !J.stopCounted){
-            J.stopCounted = true; a.stops++;
-            if (lane.mode === 'today') log('today', `Stopped at red light J${J.i+1} behind ${Math.ceil(J.queue)} cars.`);
-            else log('sys', `Stopped at J${J.i+1} (no preemption during outage).`);
-          }
-        } else if (J.x - a.x < 30){ vT = Math.min(vT, 13); }
       }
-
-      // integrate
-      const dv = vT - a.v;
-      a.v += Math.max(-DEC*1.5*DT, Math.min(ACC*DT, dv));
+      a.v += Math.max(-DEC*1.5*DT, Math.min(ACC*DT, vT - a.v));
       a.v = Math.max(0, a.v);
       a.x += a.v * DT;
 
       for (const j of lane.J){
         if (!j.passed && a.x > j.x + 3){
-          j.passed = true; j.eta = 0; a.waiting = (a.waiting === j) ? null : a.waiting;
+          j.passed = true; j.eta = 0;
           if (lane.mode === 'lh'){
             j.action = 'Passed';
             if (j.pre){ j.pre.restoreAt = T + 2; log('lh', `J${j.i+1}: ambulance through at ${Math.round(a.v*3.6)} km/h. Normal cycle restored.`); }
@@ -439,7 +479,6 @@ td.mono{font-family:var(--f-mono);font-size:13px}
     }
 
     if (lanes.every(l => l.amb.done) && !finished){ finished = true; running = false; onFinish(); }
-    if (phone.until && T > phone.until){ phone = {kind:'idle', ref:null, until:0}; }
   }
 
   function setPhone(kind, ref, lane){ phone = {kind, ref, lane, until:0, passedAt:null}; }
@@ -467,6 +506,8 @@ td.mono{font-family:var(--f-mono);font-size:13px}
     W = cv.clientWidth; H = W < 600 ? 300 : 360;
     cv.width = W*DPR; cv.height = H*DPR; cv.style.height = H + 'px';
     ctx.setTransform(DPR,0,0,DPR,0,0);
+    const padL = W < 600 ? 38 : 64, padR = W < 600 ? 34 : 56;
+    PXM = (W - padL - padR) / L; setScale();
   }
   const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
   let C = {};
@@ -497,6 +538,8 @@ td.mono{font-family:var(--f-mono);font-size:13px}
     for (const j of lane.J){ ctx.fillStyle = C['--road']; ctx.fillRect(px(j.x) - 7, top + 34, 14, lh - 42); }
     // road
     ctx.fillStyle = C['--road']; ctx.fillRect(0, y - rw, W, rw*2);
+    ctx.fillStyle = C['--line']; ctx.fillRect(0, y - rw - 11, W, 11);
+    ctx.strokeStyle = '#C9D3DE'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, y - rw - 0.5); ctx.lineTo(W, y - rw - 0.5); ctx.stroke();
     ctx.strokeStyle = C['--lane']; ctx.setLineDash([10,9]); ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); ctx.setLineDash([]);
 
@@ -519,13 +562,6 @@ td.mono{font-family:var(--f-mono);font-size:13px}
     for (const j of lane.J){
       const s = main(lane, j, T), jx = px(j.x);
       const col = s === 'green' ? C['--green'] : s === 'red' ? C['--red'] : C['--amber'];
-      // queue cars (both lanes)
-      const qFront = (a.waiting === j) ? a.qAhead : j.queue;
-      const nLow = Math.ceil(qFront - 0.05), nUp = Math.round(j.queue*0.8);
-      ctx.fillStyle = '#6D7F94';
-      const cw = small ? 7 : 9, sp = small ? 9 : 11;
-      for (let k=0;k<nLow;k++) { rr(jx - 10 - (k+1)*sp, y + rw*0.5 - 3.5, cw, 7, 2); ctx.fill(); }
-      for (let k=0;k<nUp;k++)  { rr(jx - 10 - (k+1)*sp, y - rw*0.5 - 3.5, cw, 7, 2); ctx.fill(); }
       // signal head
       const sx = jx + 10, sy = y - rw - 30;
       ctx.fillStyle = '#05090F'; rr(sx - 6, sy, 12, 24, 3); ctx.fill();
@@ -552,22 +588,18 @@ td.mono{font-family:var(--f-mono);font-size:13px}
     ctx.fillStyle = '#E8EEF5'; rr(hx, y - 14, 28, 28, 5); ctx.fill();
     ctx.fillStyle = C['--red']; ctx.fillRect(hx + 11, y - 9, 6, 18); ctx.fillRect(hx + 5, y - 3, 18, 6);
 
-    // blockers
-    for (const b of lane.B){
-      if (b.state === 'waiting' || b.state === 'gone') continue;
-      const bx = px(b.x), by = y + rw*0.5 - b.lane*rw;
-      ctx.fillStyle = '#9AA9BA'; rr(bx - 8, by - 4.5, 16, 9, 2); ctx.fill();
-      if (b.alertT !== null && lane.mode === 'lh'){ ctx.fillStyle = C['--red']; ctx.beginPath(); ctx.arc(bx, by - 8, 3, 0, 7); ctx.fill(); }
+    // every vehicle (x is the car's front bumper)
+    const cw = 9;
+    for (const c of lane.cars){
+      if (c.gone) continue;
+      const cx = px(c.x), cy = y + rw*0.5 - c.lt*rw;
+      ctx.fillStyle = c.state === 'forward' ? '#B9C6D4' : '#7C8DA2'; rr(cx - cw, cy - 3.5, cw, 7, 2); ctx.fill();
+      if (c.alertT !== null && lane.mode === 'lh' && c.x > a.x && !a.done){ ctx.fillStyle = C['--red']; ctx.beginPath(); ctx.arc(cx - cw/2, cy - 7, 2.2, 0, 7); ctx.fill(); }
     }
 
     // ambulance (drawn behind any queue it waits in)
     let ax = px(a.x);
-    const J = lane.J.find(j => !j.passed);
-    if (J && !a.done){
-      const q = a.waiting === J ? a.qAhead : (a.released === J ? 0 : (J.x - a.x < J.queue*CAR_M + 45 ? J.queue : 0));
-      const n = Math.ceil(q - 0.05);
-      if (n > 0) ax = Math.min(ax, px(J.x) - 10 - n*(small?9:11) - 14);
-    }
+    for (const c of lane.cars){ if (!a.done && !c.gone && c.lt < 0.75 && c.x > a.x) ax = Math.min(ax, px(c.x) - cw - 13 - 2); }
     const ay = y + rw*0.5;
     ctx.fillStyle = '#FFFFFF'; rr(ax - 13, ay - 6, 26, 12, 3); ctx.fill();
     ctx.fillStyle = C['--red']; ctx.fillRect(ax - 3, ay - 4.5, 6, 9); ctx.fillRect(ax - 6, ay - 1.5, 12, 3);
@@ -610,8 +642,8 @@ td.mono{font-family:var(--f-mono);font-size:13px}
       const dist = Math.max(0, j.x - lh.amb.x);
       const hot = !j.passed && j.pre;
       return `<tr><td class="mono">J${j.i+1}</td><td class="mono">${j.passed ? '—' : Math.round(dist) + ' m'}</td>
-        <td class="mono">${j.passed ? '—' : Math.round(dist/15) + ' s'}</td><td class="mono">${Math.ceil(j.queue - 0.05)}</td>
-        <td class="mono">${j.passed ? '—' : Math.round(Math.min(60, Math.max(30, j.queue/DIS + 14))) + ' s'}</td>
+        <td class="mono">${j.passed ? '—' : Math.round(dist/15) + ' s'}</td><td class="mono">${queued(lh, j)}</td>
+        <td class="mono">${j.passed ? '—' : Math.round(j.win) + ' s'}</td>
         <td>${chip(s)}</td><td class="act ${hot ? 'hot' : ''}">${j.action}</td></tr>`;
     }).join('');
 
@@ -651,7 +683,7 @@ td.mono{font-family:var(--f-mono);font-size:13px}
       const rel = Math.min(1, gap / 300);
       mYou.style.left = '200px';
       mTag.style.left = '198px';
-      const moved = phone.kind === 'road' && ref.lane > .4;
+      const moved = phone.kind === 'road' && ref.lt > .4;
       mYou.style.top = moved ? '28px' : '44px'; mTag.style.top = moved ? '10px' : '22px';
       mAmb.style.left = (200 - 28 - rel*170) + 'px';
       if (passed){
