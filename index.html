@@ -488,7 +488,7 @@ td.mono{font-family:var(--f-mono);font-size:13px}
     const [td, lh] = lanes.map(l => l.amb);
     const saved = td.t - lh.t;
     resHead.textContent = saved > 1 ? `Laluan Hijau arrived ${fmt(saved)} earlier` : 'Both runs arrived at the same time';
-    resSub.textContent = `${fmt(lh.t)} vs ${fmt(td.t)} today · ${td.stops - lh.stops} red-light stops avoided · ${alerts} drivers alerted. Without CPR, cardiac-arrest survival drops 7–10% for every minute of delay (AHA).`;
+    resSub.textContent = `${fmt(lh.t)} vs ${fmt(td.t)} today · ${td.stops - lh.stops} red-light stops avoided · ${alerts} drivers alerted.`;
     resultEl.hidden = false;
     log('sys', `Run complete. Time recovered: ${fmt(Math.max(0,saved))}.`);
   }
