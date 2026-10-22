@@ -22,7 +22,7 @@ Laluan Hijau has two layers:
 | Layer | What it does |
 |---|---|
 | **1. Smart signal preemption** | AI predicts when the ambulance will reach each junction and turns the light green **30–60 s early**, so the queue has cleared before it arrives. Crossing traffic is held red, and the normal cycle resumes once the ambulance passes. |
-| **2. Alerts for drivers ahead** | Drivers in the ambulance's path get an in-app countdown alert with a clear instruction: *move left, slow down, don't run the red.* Roadside LED signs reach drivers who don't have the app. |
+| **2. Alerts for drivers ahead** | Drivers in the ambulance's path get an in-app countdown alert with a clear instruction: *move left, slow down, don't run the red.*
 
 **Lights clear the junctions. Alerts clear the road between them.**
 
@@ -38,7 +38,6 @@ This repository contains an interactive **control-room simulation**. The same am
 - **Live two-lane corridor:** 6 signalised junctions from City of Elmina to the hospital (illustrative route).
 - **Realistic traffic:** every vehicle obeys signals and keeps its distance. When the ambulance approaches, each driver either **moves left**, **pulls onto the shoulder**, or **drives forward** to make room.
 - **Driver phone view:** a live alert with a countdown and step-by-step instructions.
-- **Roadside LED sign:** shows "AMBULANCE · KEEP LEFT" while a junction is held green.
 - **AI junction planner:** distance, ETA, queue length and the preemption window for each junction.
 - **Event log:** every request is timestamped, ready for reporting to MOH and the council.
 - **Network outage toggle:** demonstrates the fail-safe. Junctions return to their normal cycle and nothing is stuck on green.
@@ -69,7 +68,7 @@ Or view it online through GitHub Pages: *[add your Pages link here]*
 2. **Track:** live GPS position and route stream to the control platform over 4G/5G.
 3. **Predict:** the AI estimates arrival time at each junction from speed and queue length.
 4. **Preempt:** 30–60 s ahead, the controller runs amber, then all-red, then green for the ambulance's approach.
-5. **Alert:** drivers ahead get a countdown alert, and LED signs show "Ambulance: keep left".
+5. **Alert:** drivers ahead get a countdown alert.
 6. **Restore and log:** the normal cycle resumes and every run records the time saved.
 
 **Fail-safe:** if the connection drops, the junction returns to its normal cycle. The controller's conflict monitoring is never bypassed.
